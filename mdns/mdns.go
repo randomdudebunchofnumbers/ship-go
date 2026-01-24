@@ -567,9 +567,6 @@ func (m *MdnsManager) AnnounceMdnsEntry() error {
 		return err
 	}
 
-	m.mux.Lock()
-	defer m.mux.Unlock()
-
 	m.setIsServiceAnnounce(true)
 
 	return nil
@@ -627,9 +624,6 @@ func (m *MdnsManager) SetAutoAccept(accept bool) {
 	}
 
 	logging.Log().Debug("mdns: changing mdns entry failed", err)
-
-	m.mux.Lock()
-	defer m.mux.Unlock()
 
 	m.setIsServiceAnnounce(false)
 }
