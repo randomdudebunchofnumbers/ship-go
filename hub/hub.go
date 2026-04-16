@@ -33,8 +33,10 @@ type Hub struct {
 	connections map[string]api.ShipConnectionInterface
 
 	// which attempt is it to initate an connection to the remote SKI
-	connectionAttemptCounter map[string]int
-	connectionAttemptRunning map[string]bool
+	connectionAttemptCounter    map[string]int
+	connectionAttemptRunning    map[string]bool
+	connectionAttemptGeneration map[string]uint64
+	connectionAttemptGenCounter uint64 // global monotonic counter for unique generation values
 
 	port        int
 	certifciate tls.Certificate
@@ -85,8 +87,9 @@ func NewHub(hubReader api.HubReaderInterface,
 	localService *api.ServiceDetails) *Hub {
 	hub := &Hub{
 		connections:              make(map[string]api.ShipConnectionInterface),
-		connectionAttemptCounter: make(map[string]int),
-		connectionAttemptRunning: make(map[string]bool),
+		connectionAttemptCounter:    make(map[string]int),
+		connectionAttemptRunning:    make(map[string]bool),
+		connectionAttemptGeneration: make(map[string]uint64),
 		remoteServices:           make(map[string]*api.ServiceDetails),
 		knownMdnsEntries:         make([]*api.MdnsEntry, 0),
 		connectionDelayTimers:    make(map[string]*connectionDelayTimer),
