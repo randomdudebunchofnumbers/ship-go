@@ -38,6 +38,13 @@ type ProviderFactory struct {
 	NewZeroconf func([]net.Interface) api.MdnsProviderInterface
 }
 
+// mdnsTxtUpdater is an optional capability for mDNS providers that can
+// update TXT records on an existing announcement without a full
+// re-announce cycle. AvahiProvider implements this.
+type mdnsTxtUpdater interface {
+	UpdateTxt(txt []string) error
+}
+
 // DefaultProviderFactory returns the standard provider factory
 func DefaultProviderFactory() *ProviderFactory {
 	return &ProviderFactory{
@@ -561,28 +568,7 @@ func (m *MdnsManager) AnnounceMdnsEntry() error {
 		return fmt.Errorf("cannot announce mDNS entry: invalid port %d", m.port)
 	}
 
-	serviceIdentifier := m.identifier
-
-	txt := []string{ // SHIP 7.3.2
-		"txtvers=1",
-		"path=" + shipWebsocketPath,
-		"id=" + serviceIdentifier,
-		"ski=" + m.ski,
-		"brand=" + m.deviceBrand,
-		"model=" + m.deviceModel,
-		"type=" + m.deviceType,
-		"register=" + fmt.Sprintf("%v", m.autoaccept.Load()),
-	}
-
-	// SHIP Requirements for Installation Process V1.0.0
-	if len(m.deviceSerial) > 0 {
-		txt = append(txt, "serial="+m.deviceSerial)
-	}
-
-	categories := m.deviceCategoriesString(m.deviceCategories)
-	if len(categories) > 0 {
-		txt = append(txt, "cat="+categories)
-	}
+	txt := m.buildTxtRecords()
 
 	logging.Log().Debug("mdns: announce")
 
@@ -596,6 +582,31 @@ func (m *MdnsManager) AnnounceMdnsEntry() error {
 	m.setIsServiceAnnounce(true)
 
 	return nil
+}
+
+// buildTxtRecords constructs the mDNS TXT record set per SHIP 7.3.2.
+func (m *MdnsManager) buildTxtRecords() []string {
+	txt := []string{
+		"txtvers=1",
+		"path=" + shipWebsocketPath,
+		"id=" + m.identifier,
+		"ski=" + m.ski,
+		"brand=" + m.deviceBrand,
+		"model=" + m.deviceModel,
+		"type=" + m.deviceType,
+		"register=" + fmt.Sprintf("%v", m.autoaccept.Load()),
+	}
+
+	if len(m.deviceSerial) > 0 {
+		txt = append(txt, "serial="+m.deviceSerial)
+	}
+
+	categories := m.deviceCategoriesString(m.deviceCategories)
+	if len(categories) > 0 {
+		txt = append(txt, "cat="+categories)
+	}
+
+	return txt
 }
 
 // Stop the mDNS announcement on the network
@@ -633,6 +644,17 @@ func (m *MdnsManager) SetAutoAccept(accept bool) {
 
 	if !m.isServiceAnnounced() || m.mdnsProvider == nil {
 		return
+	}
+
+	// If the provider supports in-place TXT updates, use that path.
+	// On Avahi, a full re-announce fails with "Local name collision"
+	// because the old entry group still owns the service name.
+	if updater, ok := m.mdnsProvider.(mdnsTxtUpdater); ok {
+		if err := updater.UpdateTxt(m.buildTxtRecords()); err != nil {
+			logging.Log().Debug("mdns: updating TXT records failed, falling back to re-announce", err)
+		} else {
+			return
+		}
 	}
 
 	if err := m.AnnounceMdnsEntry(); err != nil {
