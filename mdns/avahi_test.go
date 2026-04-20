@@ -211,6 +211,84 @@ func (a *AvahiSuite) Test_Announce() {
 	a.sut.Unannounce()
 }
 
+func (a *AvahiSuite) Test_UpdateTxt_NoEntryGroup() {
+	// UpdateTxt should return an error when there is no active entry group
+	err := a.sut.UpdateTxt([]string{"register=true"})
+	assert.NotNil(a.T(), err)
+	assert.Contains(a.T(), err.Error(), "no active entry group")
+}
+
+func (a *AvahiSuite) Test_UpdateTxt_HappyPath() {
+	// Set up an active entry group and service data
+	a.sut.avEntryGroup = a.entryGroupMock
+	a.sut.mdnsServiceData = &mdnsServiceData{
+		Name: "testservice",
+		Port: 4289,
+		Txt:  []string{"register=false"},
+	}
+
+	newTxt := []string{"register=true", "txtvers=1"}
+
+	a.entryGroupMock.EXPECT().UpdateServiceTxt(
+		mock.Anything, mock.Anything, mock.Anything,
+		"testservice", shipZeroConfServiceType, shipZeroConfDomain,
+		mock.Anything,
+	).Return(nil).Once()
+
+	err := a.sut.UpdateTxt(newTxt)
+	assert.Nil(a.T(), err)
+
+	// Verify mdnsServiceData.Txt was updated for reconnection
+	assert.Equal(a.T(), newTxt, a.sut.mdnsServiceData.Txt)
+}
+
+func (a *AvahiSuite) Test_UpdateTxt_MultipleInterfaces() {
+	// Provider with multiple interface indexes
+	a.sut.ifaceIndexes = []int32{1, 2, 3}
+	a.sut.avEntryGroup = a.entryGroupMock
+	a.sut.mdnsServiceData = &mdnsServiceData{
+		Name: "testservice",
+		Port: 4289,
+		Txt:  []string{"register=false"},
+	}
+
+	newTxt := []string{"register=true"}
+
+	// Expect UpdateServiceTxt called once per interface
+	a.entryGroupMock.EXPECT().UpdateServiceTxt(
+		mock.Anything, mock.Anything, mock.Anything,
+		"testservice", shipZeroConfServiceType, shipZeroConfDomain,
+		mock.Anything,
+	).Return(nil).Times(3)
+
+	err := a.sut.UpdateTxt(newTxt)
+	assert.Nil(a.T(), err)
+	assert.Equal(a.T(), newTxt, a.sut.mdnsServiceData.Txt)
+}
+
+func (a *AvahiSuite) Test_UpdateTxt_DbusError() {
+	a.sut.avEntryGroup = a.entryGroupMock
+	a.sut.mdnsServiceData = &mdnsServiceData{
+		Name: "testservice",
+		Port: 4289,
+		Txt:  []string{"register=false"},
+	}
+
+	dbusErr := errors.New("D-Bus error")
+	a.entryGroupMock.EXPECT().UpdateServiceTxt(
+		mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything,
+	).Return(dbusErr).Once()
+
+	err := a.sut.UpdateTxt([]string{"register=true"})
+	assert.NotNil(a.T(), err)
+	assert.Contains(a.T(), err.Error(), "UpdateServiceTxt failed")
+
+	// mdnsServiceData.Txt should NOT have been updated on error
+	assert.Equal(a.T(), []string{"register=false"}, a.sut.mdnsServiceData.Txt)
+}
+
 func (a *AvahiSuite) Test_Avahi_Reconnect() {
 	// As we do not have an Avahi server running for automated testing
 	// these tests are very limited

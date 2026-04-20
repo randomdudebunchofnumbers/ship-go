@@ -307,6 +307,42 @@ func (a *AvahiProvider) Announce(serviceName string, port int, txt []string) err
 	return nil
 }
 
+// UpdateTxt updates the TXT records of the currently announced service
+// without creating a new entry group. This uses Avahi's UpdateServiceTxt
+// D-Bus method, which re-announces the service in-place — no goodbye
+// packets, no name collision, no gap in service visibility.
+func (a *AvahiProvider) UpdateTxt(txt []string) error {
+	a.mux.Lock()
+	defer a.mux.Unlock()
+
+	if a.avEntryGroup == nil || a.mdnsServiceData == nil {
+		return fmt.Errorf("mdns: no active entry group to update")
+	}
+
+	var btxt [][]byte
+	for _, t := range txt {
+		btxt = append(btxt, []byte(t))
+	}
+
+	for _, iface := range a.ifaceIndexes {
+		if err := a.avEntryGroup.UpdateServiceTxt(
+			iface, avahi.ProtoUnspec, 0,
+			a.mdnsServiceData.Name,
+			shipZeroConfServiceType,
+			shipZeroConfDomain,
+			btxt,
+		); err != nil {
+			return fmt.Errorf("mdns: UpdateServiceTxt failed: %w", err)
+		}
+	}
+
+	// Update stored data so avahiCallback re-announces with correct TXT
+	// after a daemon reconnect.
+	a.mdnsServiceData.Txt = txt
+
+	return nil
+}
+
 func (a *AvahiProvider) Unannounce() {
 	// Serialize with Announce so we don't race its DBus phase.
 	// Without this, Unannounce can clear avEntryGroup while Announce

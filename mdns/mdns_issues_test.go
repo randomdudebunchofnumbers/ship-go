@@ -1040,6 +1040,72 @@ func (s *IssuesSuite) Test_ShutdownWaitsForInflightAnnounce() {
 	}
 }
 
+// mockTxtUpdaterProvider combines MdnsProviderInterface with mdnsTxtUpdater
+// for testing SetAutoAccept's UpdateTxt path.
+type mockTxtUpdaterProvider struct {
+	mocks.MdnsProviderInterface
+	updateTxtCalled atomic.Bool
+	updateTxtErr    error
+	updateTxtArgs   []string
+}
+
+func (m *mockTxtUpdaterProvider) UpdateTxt(txt []string) error {
+	m.updateTxtCalled.Store(true)
+	m.updateTxtArgs = txt
+	return m.updateTxtErr
+}
+
+// Test that SetAutoAccept uses UpdateTxt when the provider supports it
+// (Avahi path), and does NOT call Announce.
+func (s *IssuesSuite) Test_SetAutoAcceptUsesUpdateTxt() {
+	provider := &mockTxtUpdaterProvider{}
+	provider.On("Announce", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+	provider.On("Unannounce").Maybe().Return()
+
+	mgr := NewMDNS("testski", "brand", "model", "EnergyManagementSystem",
+		"12345",
+		[]api.DeviceCategoryType{api.DeviceCategoryTypeEnergyManagementSystem},
+		"shipid", "serviceName",
+		4729, nil, MdnsProviderSelectionAll)
+	mgr.SetTestProvider(&provider.MdnsProviderInterface)
+	mgr.mdnsProvider = provider
+	mgr.setIsServiceAnnounce(true)
+
+	mgr.SetAutoAccept(true)
+
+	assert.True(s.T(), provider.updateTxtCalled.Load(),
+		"SetAutoAccept should call UpdateTxt when provider supports it")
+
+	// Announce should NOT be called — UpdateTxt succeeded
+	provider.AssertNotCalled(s.T(), "Announce", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// Test that SetAutoAccept falls back to Announce when UpdateTxt fails.
+func (s *IssuesSuite) Test_SetAutoAcceptFallsBackOnUpdateTxtError() {
+	provider := &mockTxtUpdaterProvider{
+		updateTxtErr: errors.New("D-Bus error"),
+	}
+	provider.On("Announce", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	provider.On("Unannounce").Maybe().Return()
+
+	mgr := NewMDNS("testski", "brand", "model", "EnergyManagementSystem",
+		"12345",
+		[]api.DeviceCategoryType{api.DeviceCategoryTypeEnergyManagementSystem},
+		"shipid", "serviceName",
+		4729, nil, MdnsProviderSelectionAll)
+	mgr.SetTestProvider(&provider.MdnsProviderInterface)
+	mgr.mdnsProvider = provider
+	mgr.setIsServiceAnnounce(true)
+
+	mgr.SetAutoAccept(true)
+
+	assert.True(s.T(), provider.updateTxtCalled.Load(),
+		"SetAutoAccept should attempt UpdateTxt first")
+
+	// UpdateTxt failed, so Announce should be called as fallback
+	provider.AssertCalled(s.T(), "Announce", mock.Anything, mock.Anything, mock.Anything)
+}
+
 // Helper: verify avahi.InterfaceUnspec is what we expect
 func init() {
 	_ = avahi.InterfaceUnspec // ensure import is used
